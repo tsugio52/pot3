@@ -1,0 +1,1592 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>植木鉢クラッシャー (Pot Shatter 3D)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      background-color: #0c0d12;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      outline: none;
+    }
+    .glass-panel {
+      background: rgba(17, 21, 30, 0.86);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6);
+    }
+    .custom-crosshair {
+      pointer-events: none;
+      transition: transform 0.05s ease-out;
+    }
+    .shake-normal {
+      animation: screenShakeNormal 0.22s cubic-bezier(.36,.07,.19,.97) both;
+    }
+    .shake-heavy {
+      animation: screenShakeHeavy 0.38s cubic-bezier(.36,.07,.19,.97) both;
+    }
+    @keyframes screenShakeNormal {
+      10%, 90% { transform: translate3d(-3px, -2px, 0); }
+      20%, 80% { transform: translate3d(3px, 3px, 0); }
+      30%, 50%, 70% { transform: translate3d(-5px, -4px, 0); }
+      40%, 60% { transform: translate3d(5px, 4px, 0); }
+    }
+    @keyframes screenShakeHeavy {
+      10%, 90% { transform: translate3d(-8px, -7px, 0) rotate(-0.8deg); }
+      20%, 80% { transform: translate3d(9px, 7px, 0) rotate(0.9deg); }
+      30%, 50%, 70% { transform: translate3d(-12px, -9px, 0) rotate(-1.2deg); }
+      40%, 60% { transform: translate3d(12px, 9px, 0) rotate(1deg); }
+    }
+    .vessel-card.active {
+      border-color: #f97316;
+      background: linear-gradient(145deg, rgba(249, 115, 22, 0.28), rgba(180, 83, 9, 0.2));
+      box-shadow: 0 0 22px rgba(249, 115, 22, 0.5);
+      transform: translateY(-2px) scale(1.03);
+    }
+    .mode-tab.active {
+      background: rgba(234, 179, 8, 0.22);
+      border-color: rgba(234, 179, 8, 0.5);
+      color: #fef08a;
+    }
+    .fever-overlay {
+      pointer-events: none;
+      box-shadow: inset 0 0 130px rgba(239, 68, 68, 0.6);
+      animation: feverPulse 1s infinite alternate;
+    }
+    @keyframes feverPulse {
+      from { opacity: 0.45; }
+      to { opacity: 1.0; }
+    }
+    .combo-text {
+      text-shadow: 0 0 20px #f97316, 0 0 45px #ef4444;
+    }
+  </style>
+</head>
+<body class="w-full h-full relative">
+
+  <!-- 3D Viewport -->
+  <div id="canvas-container" class="absolute inset-0 z-0"></div>
+
+  <!-- Fever Mode Tint -->
+  <div id="fever-overlay" class="fever-overlay fixed inset-0 z-10 hidden"></div>
+
+  <!-- Reticle & Aim Target -->
+  <div id="crosshair" class="custom-crosshair fixed z-20 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center opacity-90 pointer-events-none">
+    <div id="crosshair-vessel-badge" class="absolute -top-7 text-2xl drop-shadow-md select-none animate-bounce">🪴</div>
+    <svg class="w-16 h-16 -rotate-90 pointer-events-none" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="24" stroke="rgba(255,255,255,0.2)" stroke-width="3" fill="none" />
+      <circle id="charge-ring" cx="32" cy="32" r="24" stroke="#f97316" stroke-width="3.5" fill="none" stroke-dasharray="150.8" stroke-dashoffset="150.8" stroke-linecap="round" />
+    </svg>
+    <div class="absolute w-2.5 h-2.5 bg-orange-500 rounded-full shadow-[0_0_12px_#f97316]"></div>
+    <div id="charge-label" class="absolute -bottom-5 text-[10px] font-black text-orange-400 tracking-wider hidden">MAX CHARGE!</div>
+  </div>
+
+  <!-- FPS Current Hand HUD (Bottom Right) -->
+  <div class="fixed bottom-28 right-5 z-20 pointer-events-none hidden md:flex flex-col items-end opacity-90">
+    <div class="glass-panel px-3.5 py-2 rounded-2xl text-right">
+      <div class="text-[9px] text-zinc-400 font-bold uppercase tracking-widest">NEXT IN HAND</div>
+      <div id="hand-item-name" class="text-sm font-black text-amber-300">🪴 素焼きテラコッタ鉢</div>
+      <div id="hand-item-desc" class="text-[10px] text-zinc-400">多孔質赤土 × 観葉ポトス × リアル根鉢</div>
+    </div>
+  </div>
+
+  <!-- Combo Feedback Announcer -->
+  <div id="combo-announcer" class="fixed top-20 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex flex-col items-center opacity-0 transition-opacity duration-150">
+    <div id="combo-count" class="text-4xl sm:text-5xl font-black italic text-yellow-400 combo-text">10 COMBO!</div>
+    <div id="combo-sub" class="text-xs sm:text-sm font-bold text-orange-200 tracking-widest uppercase mt-0.5">爽快絶頂フィーバー中！</div>
+  </div>
+
+  <!-- Header / Score / Tools -->
+  <header class="absolute top-3 left-3 right-3 z-20 flex justify-between items-start pointer-events-none">
+    <div class="glass-panel rounded-2xl px-4 py-2.5 pointer-events-auto flex items-center gap-3 text-white">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center">
+          <i class="fa-solid fa-burst text-orange-400 text-lg"></i>
+        </div>
+        <div>
+          <div class="text-[10px] font-bold tracking-wider text-zinc-400">POT SHATTER 3D</div>
+          <div class="flex items-baseline gap-1.5">
+            <span class="text-2xl font-black text-white" id="shatter-counter">0</span>
+            <span class="text-xs text-orange-400 font-bold">鉢粉砕</span>
+          </div>
+        </div>
+      </div>
+      <div class="h-8 w-px bg-white/10 hidden sm:block"></div>
+      <div class="hidden sm:flex flex-col">
+        <div class="flex justify-between text-[11px] text-zinc-300 font-semibold mb-1">
+          <span>ストレス解消ゲージ</span>
+          <span id="stress-percentage" class="text-orange-400 font-bold">0%</span>
+        </div>
+        <div class="w-36 bg-zinc-800/80 rounded-full h-2.5 overflow-hidden border border-white/5">
+          <div id="stress-bar" class="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 h-full rounded-full transition-all duration-200" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Controls -->
+    <div class="glass-panel rounded-2xl p-1.5 pointer-events-auto flex items-center gap-1.5 text-white">
+      <button id="btn-slowmo" class="px-3 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 active:bg-orange-500/20 transition border border-white/5 flex items-center gap-1.5">
+        <i class="fa-solid fa-clock text-sky-400"></i>
+        <span id="slowmo-text" class="hidden md:inline">スロー再生</span>
+      </button>
+      <button id="btn-clean" class="px-3 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 active:bg-red-500/20 transition border border-white/5 flex items-center gap-1.5" title="破片を一掃">
+        <i class="fa-solid fa-broom text-emerald-400"></i>
+        <span class="hidden md:inline">掃除</span>
+      </button>
+      <button id="btn-audio" class="p-2.5 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 transition border border-white/5" title="サウンド切替">
+        <i id="audio-icon" class="fa-solid fa-volume-high text-emerald-400"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- Bottom Control Console -->
+  <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 w-11/12 max-w-2xl pointer-events-none">
+    <div class="glass-panel rounded-3xl p-3 sm:p-3.5 pointer-events-auto flex flex-col gap-2.5">
+      
+      <!-- Throw Mode Tabs -->
+      <div class="flex items-center justify-between gap-1.5 bg-black/40 p-1 rounded-2xl border border-white/5 text-xs">
+        <button data-mode="single" class="mode-tab active flex-1 py-1.5 px-2 rounded-xl font-bold transition flex items-center justify-center gap-1.5 border border-transparent">
+          <i class="fa-solid fa-bullseye text-orange-400"></i> 単発投げ
+        </button>
+        <button data-mode="shotgun" class="mode-tab flex-1 py-1.5 px-2 rounded-xl font-bold transition flex items-center justify-center gap-1.5 border border-transparent">
+          <i class="fa-solid fa-burst text-red-400"></i> 3連射
+        </button>
+        <button data-mode="gatling" class="mode-tab flex-1 py-1.5 px-2 rounded-xl font-bold transition flex items-center justify-center gap-1.5 border border-transparent">
+          <i class="fa-solid fa-bolt text-yellow-400"></i> 連続乱射
+        </button>
+        <button data-mode="charge" class="mode-tab flex-1 py-1.5 px-2 rounded-xl font-bold transition flex items-center justify-center gap-1.5 border border-transparent">
+          <i class="fa-solid fa-atom text-cyan-400"></i> チャージ剛速球
+        </button>
+      </div>
+
+      <!-- 厳選された3種類のリアル植木鉢セレクター（＋ランダム） -->
+      <div class="grid grid-cols-4 gap-2 py-0.5">
+        
+        <!-- 1. 素焼きテラコッタ鉢 -->
+        <button data-vessel="terracotta" class="vessel-card active flex flex-col items-center justify-center p-2 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition cursor-pointer">
+          <div class="text-2xl sm:text-3xl mb-0.5">🪴</div>
+          <div class="text-[11px] font-black text-amber-200">素焼きテラコッタ</div>
+          <div class="text-[9px] text-zinc-400 hidden sm:block">赤土・ポトス・根鉢</div>
+        </button>
+
+        <!-- 2. 高級釉薬白磁鉢 -->
+        <button data-vessel="porcelain" class="vessel-card flex flex-col items-center justify-center p-2 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition cursor-pointer">
+          <div class="text-2xl sm:text-3xl mb-0.5">🏺</div>
+          <div class="text-[11px] font-black text-teal-200">釉薬白磁角鉢</div>
+          <div class="text-[9px] text-zinc-400 hidden sm:block">光沢陶器・サンスベリア</div>
+        </button>
+
+        <!-- 3. 黒御影セメント鉢 -->
+        <button data-vessel="concrete" class="vessel-card flex flex-col items-center justify-center p-2 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition cursor-pointer">
+          <div class="text-2xl sm:text-3xl mb-0.5">🪨</div>
+          <div class="text-[11px] font-black text-stone-300">黒セメント多肉鉢</div>
+          <div class="text-[9px] text-zinc-400 hidden sm:block">玄武岩調・エケベリア</div>
+        </button>
+
+        <!-- ランダム切り替え -->
+        <button data-vessel="random" class="vessel-card flex flex-col items-center justify-center p-2 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 hover:bg-yellow-500/20 transition cursor-pointer">
+          <div class="text-2xl sm:text-3xl mb-0.5">🎲</div>
+          <div class="text-[11px] font-black text-yellow-300">ランダム</div>
+          <div class="text-[9px] text-yellow-400/70 hidden sm:block">3種を次々に自動供給</div>
+        </button>
+      </div>
+
+      <!-- Operation Guidance -->
+      <div class="flex items-center justify-between px-1 text-[11px] text-zinc-400">
+        <div class="flex items-center gap-1.5 truncate">
+          <span id="instruction-badge" class="px-2 py-0.5 rounded bg-orange-500/25 text-orange-300 font-mono font-bold text-[10px]">CLICK / TAP</span>
+          <span id="instruction-text" class="truncate">クリックで投擲！優雅な放物線を描いて壁でリアルに粉砕</span>
+        </div>
+        <div class="text-[10px] text-amber-300/80 font-mono hidden sm:block flex-shrink-0">
+          <i class="fa-solid fa-keyboard mr-1"></i>[1〜3キー]で即切替
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+  // =========================================================================
+  // MULTI-MODAL ACOUSTIC SYNTHESIZER (TERRACOTTA, GLAZED CERAMIC, BASALT SOIL)
+  // =========================================================================
+  class RealisticPotAcousticEngine {
+    constructor() {
+      this.ctx = null;
+      this.masterGain = null;
+      this.enabled = true;
+    }
+
+    init() {
+      if (this.ctx) return;
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AudioCtx();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.setValueAtTime(0.92, this.ctx.currentTime);
+      this.masterGain.connect(this.ctx.destination);
+    }
+
+    resume() {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume();
+      }
+    }
+
+    // Realistic aerodynamic whoosh sound for high-arc flight
+    playThrowSound(speedMult = 1.0) {
+      if (!this.enabled || !this.ctx) return;
+      const now = this.ctx.currentTime;
+      const dur = 0.85 / Math.min(2.0, speedMult);
+
+      const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+      const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const out = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) out[i] = Math.random() * 2 - 1;
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = noiseBuffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.setValueAtTime(2.6, now);
+      filter.frequency.setValueAtTime(180 * speedMult, now);
+      filter.frequency.exponentialRampToValueAtTime(520 * speedMult, now + dur * 0.45);
+      filter.frequency.exponentialRampToValueAtTime(140, now + dur);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.18 * Math.min(1.3, speedMult), now + dur * 0.35);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+
+      noise.start(now);
+      noise.stop(now + dur);
+    }
+
+    // Material-specific shattering acoustics
+    playPotShatter(type = 'terracotta', pan = 0, power = 1.0) {
+      if (!this.enabled || !this.ctx) return;
+      const now = this.ctx.currentTime;
+
+      const panner = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
+      if (panner) {
+        panner.pan.setValueAtTime(Math.max(-0.85, Math.min(0.85, pan)), now);
+        panner.connect(this.masterGain);
+      }
+      const dest = panner || this.masterGain;
+
+      // 1. Sharp Initial Crack Noise
+      const isGlazed = type === 'porcelain';
+      const isBasalt = type === 'concrete';
+      const crackDur = isGlazed ? 0.04 : (isBasalt ? 0.065 : 0.05);
+      const crackBuf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * crackDur), this.ctx.sampleRate);
+      const crackData = crackBuf.getChannelData(0);
+      for (let i = 0; i < crackBuf.length; i++) {
+        crackData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * (isGlazed ? 0.009 : 0.015)));
+      }
+      const crackSrc = this.ctx.createBufferSource();
+      crackSrc.buffer = crackBuf;
+      const crackFilter = this.ctx.createBiquadFilter();
+      crackFilter.type = isGlazed ? 'highpass' : 'bandpass';
+      crackFilter.frequency.setValueAtTime(isGlazed ? 3800 : (isBasalt ? 1600 : 2600), now);
+      const crackGain = this.ctx.createGain();
+      crackGain.gain.setValueAtTime(0.95 * power, now);
+
+      crackSrc.connect(crackFilter);
+      crackFilter.connect(crackGain);
+      crackGain.connect(dest);
+      crackSrc.start(now);
+
+      // 2. Harmonic Resonances for Ceramic Bodies
+      let modalFreqs, decayBase;
+      if (isGlazed) {
+        // High-pitch ringing chime of vitreous china
+        modalFreqs = [2400, 3900, 5600, 7800, 10400];
+        decayBase = 0.42;
+      } else if (isBasalt) {
+        // Heavy, dull structural impact
+        modalFreqs = [280, 520, 940, 1480, 2200];
+        decayBase = 0.22;
+      } else {
+        // Terracotta: warm, gritty clay body resonance
+        modalFreqs = [980, 1650, 2550, 3600, 5200];
+        decayBase = 0.28;
+      }
+
+      modalFreqs.forEach((freq, idx) => {
+        const osc = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = (idx % 2 === 0) ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(freq * (0.97 + Math.random() * 0.06), now);
+
+        const initialVol = (0.35 / (idx + 1)) * power;
+        g.gain.setValueAtTime(initialVol, now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + decayBase * (1 + idx * 0.12));
+
+        osc.connect(g);
+        g.connect(dest);
+        osc.start(now);
+        osc.stop(now + decayBase * 1.5);
+      });
+
+      // 3. Heavy Sub-bass Thud (Soil + Root ball impact)
+      const subOsc = this.ctx.createOscillator();
+      const subGain = this.ctx.createGain();
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(isBasalt ? 115 : 95, now);
+      subOsc.frequency.exponentialRampToValueAtTime(28, now + 0.22);
+      subGain.gain.setValueAtTime(0.7 * power, now);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+      subOsc.connect(subGain);
+      subGain.connect(dest);
+      subOsc.start(now);
+      subOsc.stop(now + 0.25);
+
+      // 4. Secondary clatter of tiny shards bouncing
+      const clatterCount = isGlazed ? 8 : 4;
+      for (let i = 0; i < clatterCount; i++) {
+        const delay = 0.03 + Math.random() * 0.28;
+        const tNow = now + delay;
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime((isGlazed ? 3500 : 2000) + Math.random() * 3500, tNow);
+        g.gain.setValueAtTime(0.08 * power, tNow);
+        g.gain.exponentialRampToValueAtTime(0.0001, tNow + 0.05);
+        o.connect(g);
+        g.connect(dest);
+        o.start(tNow);
+        o.stop(tNow + 0.06);
+      }
+    }
+  }
+
+  // =========================================================================
+  // PROCEDURAL HIGH-RESOLUTION TEXTURE ENGINE
+  // =========================================================================
+
+  // 1. Classic Terracotta with Clay Grain & Efflorescence
+  function createTerracottaTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#b44e2b';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Warm clay shading gradient
+    const grad = ctx.createLinearGradient(0, 0, 512, 512);
+    grad.addColorStop(0, 'rgba(196, 92, 53, 0.4)');
+    grad.addColorStop(1, 'rgba(138, 52, 27, 0.4)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Fine porous clay texture & light mineral dust
+    for (let i = 0; i < 18000; i++) {
+      const isDark = Math.random() > 0.4;
+      ctx.fillStyle = isDark ? 'rgba(60, 20, 10, 0.08)' : 'rgba(255, 235, 215, 0.12)';
+      ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.8, 1.8);
+    }
+    // Efflorescence (white mineral streaks from moisture)
+    for (let j = 0; j < 12; j++) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+      ctx.beginPath();
+      ctx.arc(Math.random() * 512, Math.random() * 512, 20 + Math.random() * 40, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+
+  // 2. Glazed Ceramic (Porcelain) with subtle glaze crackle lines
+  function createPorcelainTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Subtle porcelain glaze variation
+    for (let i = 0; i < 5000; i++) {
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.25)';
+      ctx.fillRect(Math.random() * 512, Math.random() * 512, 1.5, 1.5);
+    }
+    // Delicate celadon/crackle lines
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
+    ctx.lineWidth = 0.8;
+    for (let c = 0; c < 14; c++) {
+      ctx.beginPath();
+      let x = Math.random() * 512, y = Math.random() * 512;
+      ctx.moveTo(x, y);
+      for (let s = 0; s < 6; s++) {
+        x += (Math.random() - 0.5) * 60;
+        y += (Math.random() - 0.5) * 60;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+
+  // 3. Basalt Rough Concrete / Lava Stone
+  function createConcreteTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#26262b';
+    ctx.fillRect(0, 0, 512, 512);
+
+    for (let i = 0; i < 22000; i++) {
+      const tone = Math.random();
+      ctx.fillStyle = tone > 0.5 ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.22)';
+      ctx.fillRect(Math.random() * 512, Math.random() * 512, 2.0, 2.0);
+    }
+    // Mineral aggregate speckles
+    for (let k = 0; k < 600; k++) {
+      ctx.fillStyle = Math.random() > 0.5 ? '#52525b' : '#18181b';
+      ctx.beginPath();
+      ctx.arc(Math.random() * 512, Math.random() * 512, 1.5 + Math.random() * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+
+  // 4. Damp Potting Soil & Root Texture
+  function createRichSoilTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#211611';
+    ctx.fillRect(0, 0, 256, 256);
+
+    for (let i = 0; i < 9000; i++) {
+      const rnd = Math.random();
+      ctx.fillStyle = rnd > 0.7 ? '#3d261a' : (rnd > 0.3 ? '#160e0a' : '#d4bda8'); // soil + perlite bits
+      ctx.fillRect(Math.random() * 256, Math.random() * 256, rnd > 0.9 ? 2.5 : 1.5, rnd > 0.9 ? 2.5 : 1.5);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+
+  // 5. Indoor Smash Room Wall & Floor
+  function createSmashWallTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#262220';
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Weathered industrial brickwork
+    const rows = 16, cols = 8;
+    const bh = 512 / rows, bw = 512 / cols;
+    for (let r = 0; r < rows; r++) {
+      const off = (r % 2 === 0) ? 0 : bw * 0.5;
+      for (let c = -1; c < cols + 1; c++) {
+        const x = c * bw + off;
+        const y = r * bh;
+        const shade = Math.random();
+        ctx.fillStyle = `rgb(${155 + Math.floor(shade * 35)}, ${60 + Math.floor(shade * 22)}, ${45 + Math.floor(shade * 18)})`;
+        ctx.fillRect(x + 2, y + 2, bw - 4, bh - 4);
+        for (let s = 0; s < 45; s++) {
+          ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.18)';
+          ctx.fillRect(x + Math.random() * bw, y + Math.random() * bh, 2, 2);
+        }
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 2);
+    return tex;
+  }
+
+  function createConcreteFloorTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#17191d';
+    ctx.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 9000; i++) {
+      ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.07})`;
+      ctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(4, 4);
+    return tex;
+  }
+
+  // =========================================================================
+  // THREE.JS SCENE SETUP & ENVIRONMENT
+  // =========================================================================
+  const audio = new RealisticPotAcousticEngine();
+  const container = document.getElementById('canvas-container');
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x0c0d12, 0.038);
+
+  const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 1.45, 4.4);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.18;
+  container.appendChild(renderer.domElement);
+
+  // Lighting
+  const ambientLight = new THREE.AmbientLight(0xffeedd, 0.75);
+  scene.add(ambientLight);
+
+  const keyLight = new THREE.DirectionalLight(0xfff5ea, 1.4);
+  keyLight.position.set(4.2, 8.0, 5.0);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.width = 2048;
+  keyLight.shadow.mapSize.height = 2048;
+  keyLight.shadow.bias = -0.0003;
+  scene.add(keyLight);
+
+  const accentRimLight = new THREE.PointLight(0xf97316, 0.85, 14);
+  accentRimLight.position.set(0, 2.6, -1.8);
+  scene.add(accentRimLight);
+
+  // Load procedural textures
+  const texTerracotta = createTerracottaTexture();
+  const texPorcelain = createPorcelainTexture();
+  const texConcrete = createConcreteTexture();
+  const texSoil = createRichSoilTexture();
+  const texWall = createSmashWallTexture();
+  const texFloor = createConcreteFloorTexture();
+
+  // Target Wall & Floor
+  const WALL_Z = -4.5;
+  const wall = new THREE.Mesh(
+    new THREE.PlaneGeometry(22, 13),
+    new THREE.MeshStandardMaterial({ map: texWall, roughness: 0.86 })
+  );
+  wall.position.set(0, 4.2, WALL_Z);
+  wall.receiveShadow = true;
+  scene.add(wall);
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(24, 24),
+    new THREE.MeshStandardMaterial({ map: texFloor, roughness: 0.75, metalness: 0.12 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Impact Target Mark on Wall
+  const targetGroup = new THREE.Group();
+  targetGroup.position.set(0, 2.2, WALL_Z + 0.02);
+  const ring1 = new THREE.Mesh(new THREE.RingGeometry(0.75, 0.85, 36), new THREE.MeshBasicMaterial({ color: 0xf97316, side: THREE.DoubleSide }));
+  const ring2 = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.48, 36), new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide }));
+  const centerDot = new THREE.Mesh(new THREE.CircleGeometry(0.16, 32), new THREE.MeshBasicMaterial({ color: 0xef4444, side: THREE.DoubleSide }));
+  centerDot.position.z = 0.01;
+  targetGroup.add(ring1, ring2, centerDot);
+  scene.add(targetGroup);
+
+  // =========================================================================
+  // DETAILED 3 REALISTIC FLOWER POTS & ROOT BALL BUILDER
+  // =========================================================================
+
+  let currentVessel = 'terracotta';
+  let currentAttackMode = 'single';
+  const allVesselTypes = ['terracotta', 'porcelain', 'concrete'];
+  const vesselMeta = {
+    terracotta: {
+      name: '🪴 素焼きテラコッタ鉢',
+      desc: '多孔質赤土 × 観葉ポトス × リアル根鉢',
+      badge: '🪴'
+    },
+    porcelain: {
+      name: '🏺 釉薬白磁角鉢',
+      desc: '光沢陶器 × サンスベリア × 澄んだ反響',
+      badge: '🏺'
+    },
+    concrete: {
+      name: '🪨 黒セメント多肉鉢',
+      desc: '玄武岩調 × エケベリア多肉 × 砕石衝撃',
+      badge: '🪨'
+    }
+  };
+
+  /**
+   * Builds a realistic flower pot with thick rim, tapered body, soil root ball, and plant
+   */
+  function createRealisticPot(type) {
+    const root = new THREE.Group();
+    const potShards = [];
+    let rootBallMesh = null;
+    let plantMesh = null;
+    const looseSoilLumps = [];
+
+    if (type === 'porcelain') {
+      // =====================================================================
+      // 1. GLAZED WHITE PORCELAIN (Square Modern Planter + Sansevieria)
+      // =====================================================================
+      const porcelainMat = new THREE.MeshPhysicalMaterial({
+        map: texPorcelain,
+        color: 0xffffff,
+        roughness: 0.15,
+        metalness: 0.05,
+        clearcoat: 0.85,
+        clearcoatRoughness: 0.1
+      });
+
+      // Thick 4 sides forming square planter
+      const sideLength = 0.44;
+      const height = 0.46;
+      const thickness = 0.04;
+      const halfL = sideLength * 0.5;
+
+      const sideConfigs = [
+        { pos: [0, height * 0.5, halfL], rot: [0, 0, 0], norm: new THREE.Vector3(0, 0.2, 1) },
+        { pos: [0, height * 0.5, -halfL], rot: [0, Math.PI, 0], norm: new THREE.Vector3(0, 0.2, -1) },
+        { pos: [halfL, height * 0.5, 0], rot: [0, Math.PI * 0.5, 0], norm: new THREE.Vector3(1, 0.2, 0) },
+        { pos: [-halfL, height * 0.5, 0], rot: [0, -Math.PI * 0.5, 0], norm: new THREE.Vector3(-1, 0.2, 0) },
+      ];
+
+      sideConfigs.forEach(cfg => {
+        const sideMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(sideLength, height, thickness),
+          porcelainMat
+        );
+        sideMesh.position.set(...cfg.pos);
+        sideMesh.rotation.set(...cfg.rot);
+        sideMesh.castShadow = true;
+        sideMesh.receiveShadow = true;
+        sideMesh.userData = { normalDir: cfg.norm.normalize() };
+        root.add(sideMesh);
+        potShards.push(sideMesh);
+      });
+
+      // Bottom Base
+      const bottomMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(sideLength, thickness, sideLength),
+        porcelainMat
+      );
+      bottomMesh.position.y = thickness * 0.5;
+      bottomMesh.castShadow = true;
+      bottomMesh.userData = { normalDir: new THREE.Vector3(0, -1, 0) };
+      root.add(bottomMesh);
+      potShards.push(bottomMesh);
+
+      // Root Ball (Square-ish block of soil with white pebbles on top)
+      rootBallMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(sideLength - 0.08, height - 0.1, sideLength - 0.08),
+        new THREE.MeshStandardMaterial({ map: texSoil, roughness: 0.95 })
+      );
+      rootBallMesh.position.y = height * 0.46;
+      rootBallMesh.castShadow = true;
+      root.add(rootBallMesh);
+
+      // Sansevieria (Snake Plant) leaves standing upright
+      plantMesh = new THREE.Group();
+      const leafMat = new THREE.MeshStandardMaterial({
+        color: 0x1e3a29,
+        roughness: 0.45,
+        side: THREE.DoubleSide
+      });
+      const leafBorderMat = new THREE.MeshStandardMaterial({
+        color: 0xfacc15,
+        roughness: 0.4,
+        side: THREE.DoubleSide
+      });
+
+      const leafHeights = [0.65, 0.55, 0.72, 0.48, 0.6];
+      for (let l = 0; l < leafHeights.length; l++) {
+        const lh = leafHeights[l];
+        const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.065, lh, 4), leafMat);
+        leaf.scale.set(1.3, 1, 0.25);
+        leaf.position.set((Math.random() - 0.5) * 0.12, lh * 0.5 + 0.15, (Math.random() - 0.5) * 0.12);
+        leaf.rotation.set((Math.random() - 0.5) * 0.18, l * 1.2, (Math.random() - 0.5) * 0.18);
+        leaf.castShadow = true;
+        plantMesh.add(leaf);
+      }
+      plantMesh.position.y = height * 0.4;
+      root.add(plantMesh);
+
+    } else if (type === 'concrete') {
+      // =====================================================================
+      // 2. BASALT CONCRETE POT (Rough Low Bowl + Echeveria Succulent)
+      // =====================================================================
+      const concreteMat = new THREE.MeshStandardMaterial({
+        map: texConcrete,
+        roughness: 0.96,
+        metalness: 0.08
+      });
+
+      // 6 curved thick bowl shards
+      const slices = 6;
+      for (let s = 0; s < slices; s++) {
+        const a = (s * Math.PI * 2) / slices;
+        const shard = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.38, 0.26, 0.28, 4, 1, false, a, (Math.PI * 2) / slices),
+          concreteMat
+        );
+        shard.position.y = 0.14;
+        shard.castShadow = true;
+        shard.receiveShadow = true;
+        shard.userData = { normalDir: new THREE.Vector3(Math.cos(a + 0.5), 0.35, Math.sin(a + 0.5)).normalize() };
+        root.add(shard);
+        potShards.push(shard);
+      }
+
+      // Base disc
+      const baseDisc = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.26, 0.26, 0.05, 12),
+        concreteMat
+      );
+      baseDisc.position.y = 0.025;
+      baseDisc.userData = { normalDir: new THREE.Vector3(0, -1, 0) };
+      root.add(baseDisc);
+      potShards.push(baseDisc);
+
+      // Root Ball
+      rootBallMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.33, 0.22, 0.22, 10),
+        new THREE.MeshStandardMaterial({ map: texSoil, roughness: 0.98 })
+      );
+      rootBallMesh.position.y = 0.14;
+      rootBallMesh.castShadow = true;
+      root.add(rootBallMesh);
+
+      // Echeveria Succulent Rosette
+      plantMesh = new THREE.Group();
+      const succulentMat = new THREE.MeshStandardMaterial({
+        color: 0x34d399,
+        roughness: 0.32
+      });
+      const petalTiers = [
+        { count: 8, radius: 0.26, scale: 0.11, y: 0.02 },
+        { count: 6, radius: 0.18, scale: 0.09, y: 0.07 },
+        { count: 4, radius: 0.1, scale: 0.07, y: 0.12 }
+      ];
+
+      petalTiers.forEach(tier => {
+        for (let p = 0; p < tier.count; p++) {
+          const ang = (p * Math.PI * 2) / tier.count + (tier.y * 5);
+          const petal = new THREE.Mesh(
+            new THREE.SphereGeometry(tier.scale, 6, 6),
+            succulentMat
+          );
+          petal.scale.set(1.4, 0.5, 1.8);
+          petal.position.set(Math.cos(ang) * tier.radius, tier.y, Math.sin(ang) * tier.radius);
+          petal.lookAt(0, tier.y + 0.15, 0);
+          petal.castShadow = true;
+          plantMesh.add(petal);
+        }
+      });
+      plantMesh.position.y = 0.26;
+      root.add(plantMesh);
+
+    } else {
+      // =====================================================================
+      // 3. CLASSIC TERRACOTTA POT (With Folded Rim Lip + Pothos Foliage)
+      // =====================================================================
+      const terracottaMat = new THREE.MeshStandardMaterial({
+        map: texTerracotta,
+        roughness: 0.88,
+        metalness: 0.02
+      });
+
+      // Tapered body broken into 7 realistic tapered curved shards
+      const slices = 7;
+      const height = 0.44;
+      for (let s = 0; s < slices; s++) {
+        const a = (s * Math.PI * 2) / slices;
+        const shard = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.36, 0.24, height, 4, 1, false, a, (Math.PI * 2) / slices),
+          terracottaMat
+        );
+        shard.position.y = height * 0.5;
+        shard.castShadow = true;
+        shard.receiveShadow = true;
+        shard.userData = { normalDir: new THREE.Vector3(Math.cos(a + 0.45), 0.25, Math.sin(a + 0.45)).normalize() };
+        root.add(shard);
+        potShards.push(shard);
+      }
+
+      // Classic Thick Rolled Rim Lip (Upper Collar)
+      for (let r = 0; r < 4; r++) {
+        const a = (r * Math.PI * 2) / 4;
+        const rimShard = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.39, 0.38, 0.09, 4, 1, false, a, (Math.PI * 2) / 4),
+          terracottaMat
+        );
+        rimShard.position.y = height + 0.01;
+        rimShard.castShadow = true;
+        rimShard.userData = { normalDir: new THREE.Vector3(Math.cos(a + 0.6), 0.4, Math.sin(a + 0.6)).normalize() };
+        root.add(rimShard);
+        potShards.push(rimShard);
+      }
+
+      // Drainage hole base disc
+      const baseDisc = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.24, 0.24, 0.04, 12),
+        terracottaMat
+      );
+      baseDisc.position.y = 0.02;
+      baseDisc.userData = { normalDir: new THREE.Vector3(0, -1, 0) };
+      root.add(baseDisc);
+      potShards.push(baseDisc);
+
+      // Root Ball (The tight clump of soil molded inside the pot)
+      rootBallMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.33, 0.22, height * 0.85, 10),
+        new THREE.MeshStandardMaterial({ map: texSoil, roughness: 0.95 })
+      );
+      rootBallMesh.position.y = height * 0.46;
+      rootBallMesh.castShadow = true;
+      root.add(rootBallMesh);
+
+      // Lush Houseplant Leaves (Pothos/Foliage with branching stems)
+      plantMesh = new THREE.Group();
+      const plantMat = new THREE.MeshStandardMaterial({
+        color: 0x22c55e,
+        roughness: 0.5,
+        side: THREE.DoubleSide
+      });
+      const stemMat = new THREE.MeshStandardMaterial({
+        color: 0x166534,
+        roughness: 0.6
+      });
+
+      for (let i = 0; i < 7; i++) {
+        const ang = (i * Math.PI * 2) / 7 + (Math.random() - 0.5) * 0.4;
+        const stem = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.012, 0.016, 0.26, 4),
+          stemMat
+        );
+        stem.position.set(Math.cos(ang) * 0.09, 0.12, Math.sin(ang) * 0.09);
+        stem.rotation.set((Math.random() - 0.5) * 0.5, ang, 0.5 + Math.random() * 0.4);
+
+        // Heart/Oval Leaf blade
+        const leaf = new THREE.Mesh(
+          new THREE.ConeGeometry(0.09, 0.22, 4),
+          plantMat
+        );
+        leaf.scale.set(1.4, 1, 0.2);
+        leaf.position.y = 0.13;
+        leaf.rotation.x = 0.4;
+        leaf.castShadow = true;
+        stem.add(leaf);
+
+        plantMesh.add(stem);
+      }
+      plantMesh.position.y = height * 0.85;
+      root.add(plantMesh);
+    }
+
+    // Additional loose lumps of potting soil that scatter separately
+    for (let k = 0; k < 4; k++) {
+      const lump = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.05 + Math.random() * 0.04, 0),
+        new THREE.MeshStandardMaterial({ map: texSoil, roughness: 0.98 })
+      );
+      lump.position.set((Math.random() - 0.5) * 0.2, 0.2 + Math.random() * 0.15, (Math.random() - 0.5) * 0.2);
+      root.add(lump);
+      looseSoilLumps.push(lump);
+    }
+
+    return { root, potShards, rootBallMesh, plantMesh, looseSoilLumps, type };
+  }
+
+  // =========================================================================
+  // FIRST-PERSON HAND PREVIEW & AMMUNITION CAROUSEL
+  // =========================================================================
+  const handAnchor = new THREE.Group();
+  scene.add(handAnchor);
+  let handMesh = null;
+
+  function updateHandModel() {
+    if (handMesh) {
+      scene.remove(handMesh);
+      handMesh = null;
+    }
+    const resolvedType = currentVessel === 'random' 
+      ? allVesselTypes[Math.floor(Math.random() * allVesselTypes.length)] 
+      : currentVessel;
+
+    const item = createRealisticPot(resolvedType);
+    handMesh = item.root;
+    handMesh.scale.set(0.66, 0.66, 0.66);
+    scene.add(handMesh);
+
+    const nameEl = document.getElementById('hand-item-name');
+    const descEl = document.getElementById('hand-item-desc');
+    const info = vesselMeta[resolvedType];
+    if (nameEl && info) nameEl.innerText = info.name;
+    if (descEl && info) descEl.innerText = info.desc;
+  }
+  updateHandModel();
+
+  // =========================================================================
+  // PHYSICS SIMULATION, PARTICLES & DEBRIS
+  // =========================================================================
+  const flyingPots = [];
+  const activeDebris = [];
+  const wallDecals = [];
+
+  let shatterCount = 0;
+  let comboCount = 0;
+  let comboTimer = null;
+  let stressLevel = 0;
+  let isSlowMo = false;
+  let isFever = false;
+
+  // Particle System (Dust, Soil Particles, Ceramic Flecks)
+  const PARTICLE_COUNT = 900;
+  const partGeo = new THREE.BufferGeometry();
+  const partPos = new Float32Array(PARTICLE_COUNT * 3);
+  const partVel = [];
+  const partColor = new Float32Array(PARTICLE_COUNT * 3);
+  const partLife = new Float32Array(PARTICLE_COUNT);
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    partPos[i * 3 + 1] = -100;
+    partVel.push(new THREE.Vector3(0, 0, 0));
+    partLife[i] = 0;
+  }
+  partGeo.setAttribute('position', new THREE.BufferAttribute(partPos, 3));
+  partGeo.setAttribute('color', new THREE.BufferAttribute(partColor, 3));
+
+  const partMat = new THREE.PointsMaterial({
+    size: 0.15,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.95
+  });
+  const particleSystem = new THREE.Points(partGeo, partMat);
+  scene.add(particleSystem);
+
+  let particleIdx = 0;
+  function spawnDustParticles(x, y, z, count = 35, baseColor = [0.35, 0.22, 0.15], spread = 4.2) {
+    for (let i = 0; i < count; i++) {
+      const idx = (particleIdx + i) % PARTICLE_COUNT;
+      partPos[idx * 3] = x + (Math.random() - 0.5) * 0.2;
+      partPos[idx * 3 + 1] = y + (Math.random() - 0.5) * 0.2;
+      partPos[idx * 3 + 2] = z + (Math.random() - 0.5) * 0.2;
+
+      partVel[idx].set(
+        (Math.random() - 0.5) * spread,
+        Math.random() * spread * 0.8 + 0.6,
+        Math.random() * spread * 0.7 + 0.6
+      );
+
+      partColor[idx * 3] = baseColor[0] * (0.8 + Math.random() * 0.4);
+      partColor[idx * 3 + 1] = baseColor[1] * (0.8 + Math.random() * 0.4);
+      partColor[idx * 3 + 2] = baseColor[2] * (0.8 + Math.random() * 0.4);
+      partLife[idx] = 1.0;
+    }
+    particleIdx = (particleIdx + count) % PARTICLE_COUNT;
+    partGeo.attributes.position.needsUpdate = true;
+    partGeo.attributes.color.needsUpdate = true;
+  }
+
+  // Realistic Mud & Soil Splatter Decal on Wall
+  function addMudDecal(x, y, colorHex = 0x22150f, radius = 0.42) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#21140e';
+
+    // Splatter shape
+    ctx.beginPath();
+    ctx.arc(64, 64, 38, 0, Math.PI * 2);
+    ctx.fill();
+    for (let s = 0; s < 12; s++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 32 + Math.random() * 26;
+      ctx.beginPath();
+      ctx.arc(64 + Math.cos(ang) * dist, 64 + Math.sin(ang) * dist, 4 + Math.random() * 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+
+    const decal = new THREE.Mesh(
+      new THREE.PlaneGeometry(radius * 2, radius * 2),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.75, depthWrite: false })
+    );
+    decal.position.set(x, y, WALL_Z + 0.015);
+    scene.add(decal);
+    wallDecals.push(decal);
+
+    if (wallDecals.length > 50) {
+      const old = wallDecals.shift();
+      scene.remove(old);
+      old.geometry.dispose();
+      old.material.dispose();
+    }
+  }
+
+  // =========================================================================
+  // THROWING LOGIC & HIGH-ARC TRAJECTORY
+  // =========================================================================
+  function throwPot(targetScreenX, targetScreenY, speedMultiplier = 1.0, spreadOffset = null) {
+    audio.init();
+    audio.resume();
+    audio.playThrowSound(speedMultiplier);
+
+    const ndcX = (targetScreenX / window.innerWidth) * 2 - 1;
+    const ndcY = -(targetScreenY / window.innerHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+
+    const wallPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -WALL_Z);
+    const targetPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(wallPlane, targetPoint);
+
+    if (!targetPoint) targetPoint.set(0, 2.2, WALL_Z);
+
+    if (spreadOffset) {
+      targetPoint.x += spreadOffset.x;
+      targetPoint.y += spreadOffset.y;
+    }
+
+    const resolvedType = currentVessel === 'random' 
+      ? allVesselTypes[Math.floor(Math.random() * allVesselTypes.length)] 
+      : currentVessel;
+
+    const potObj = createRealisticPot(resolvedType);
+
+    // Initial throw position from hand in FPS perspective
+    const startPos = new THREE.Vector3(
+      camera.position.x + 0.28 + (Math.random() - 0.5) * 0.12,
+      camera.position.y - 0.3,
+      camera.position.z - 0.65
+    );
+    potObj.root.position.copy(startPos);
+
+    if (isFever) potObj.root.scale.set(1.22, 1.22, 1.22);
+    scene.add(potObj.root);
+
+    // Controlled leisurely flight duration (~0.88s) to clearly witness trajectory
+    const flightDuration = Math.max(0.5, 0.90 / (speedMultiplier * 0.95));
+
+    const vx = (targetPoint.x - startPos.x) / flightDuration;
+    const vz = (targetPoint.z - startPos.z) / flightDuration;
+    // Parabolic upward initial velocity considering gravity (-9.8)
+    const vy = (targetPoint.y - startPos.y) / flightDuration + 0.5 * 9.8 * flightDuration;
+
+    flyingPots.push({
+      potObj,
+      velocity: new THREE.Vector3(vx, vy, vz),
+      rotSpeed: new THREE.Vector3(
+        (Math.random() - 0.5) * 3.6,
+        (Math.random() - 0.5) * 4.2,
+        (Math.random() - 0.5) * 3.4
+      ),
+      speedMult: speedMultiplier,
+      isBroken: false
+    });
+
+    // Instantly supply next pot into the hand
+    updateHandModel();
+  }
+
+  // =========================================================================
+  // SHATTER IMPACT & ROOT BALL EJECTION
+  // =========================================================================
+  function smashPot(item, hitPoint) {
+    item.isBroken = true;
+    const { potObj, velocity, speedMult } = item;
+    const matType = potObj.type;
+
+    // Trigger physical audio
+    const pan = hitPoint.x / 4.5;
+    audio.playPotShatter(matType, pan, Math.min(2.2, speedMult));
+
+    // Screen Shake
+    const isHeavy = speedMult > 1.6 || matType === 'concrete';
+    triggerScreenShake(isHeavy);
+
+    // Mud Splatter Decal
+    let decalColor = 0x22140e;
+    if (matType === 'porcelain') decalColor = 0x332015;
+    else if (matType === 'concrete') decalColor = 0x1c1917;
+    addMudDecal(hitPoint.x, hitPoint.y, decalColor, speedMult > 1.6 ? 0.75 : 0.45);
+
+    // Dust and Soil Particles
+    let pColor = [0.38, 0.22, 0.14]; // damp soil
+    if (matType === 'porcelain') pColor = [0.85, 0.88, 0.92]; // white ceramic dust
+    else if (matType === 'concrete') pColor = [0.25, 0.25, 0.28]; // basalt dust
+    spawnDustParticles(hitPoint.x, hitPoint.y, hitPoint.z + 0.1, isHeavy ? 60 : 35, pColor, speedMult * 4.4);
+
+    const wPos = new THREE.Vector3();
+    const wQuat = new THREE.Quaternion();
+
+    // 1. Detach Ceramic Shards
+    potObj.potShards.forEach(shard => {
+      shard.getWorldPosition(wPos);
+      shard.getWorldQuaternion(wQuat);
+      scene.attach(shard);
+
+      const outward = shard.userData.normalDir 
+        ? shard.userData.normalDir.clone().applyQuaternion(wQuat) 
+        : new THREE.Vector3(0, 1, 0);
+
+      const shardVel = new THREE.Vector3(
+        -velocity.x * 0.16 + outward.x * (3.8 + Math.random() * 5 * speedMult),
+        -velocity.y * 0.16 + outward.y * (3.0 + Math.random() * 4.5 * speedMult) + Math.random() * 1.5,
+        Math.abs(velocity.z) * (0.15 + Math.random() * 0.28) + outward.z * 3.2
+      );
+
+      activeDebris.push({
+        mesh: shard,
+        velocity: shardVel,
+        rotVelocity: new THREE.Vector3((Math.random() - 0.5) * 28, (Math.random() - 0.5) * 28, (Math.random() - 0.5) * 28),
+        bounces: 0,
+        age: 0
+      });
+    });
+
+    // 2. Detach Intact Root Ball (The soil core that slips out intact!)
+    if (potObj.rootBallMesh) {
+      scene.attach(potObj.rootBallMesh);
+      activeDebris.push({
+        mesh: potObj.rootBallMesh,
+        velocity: new THREE.Vector3(
+          -velocity.x * 0.12 + (Math.random() - 0.5) * 2.5,
+          Math.random() * 2.5 + 1.2,
+          Math.abs(velocity.z) * 0.18 + 1.8
+        ),
+        rotVelocity: new THREE.Vector3(Math.random() * 8, Math.random() * 8, Math.random() * 8),
+        bounces: 0,
+        age: 0
+      });
+    }
+
+    // 3. Detach Plant
+    if (potObj.plantMesh) {
+      scene.attach(potObj.plantMesh);
+      activeDebris.push({
+        mesh: potObj.plantMesh,
+        velocity: new THREE.Vector3(
+          -velocity.x * 0.1 + (Math.random() - 0.5) * 3,
+          Math.random() * 3.2 + 1.6,
+          Math.abs(velocity.z) * 0.2 + 2.2
+        ),
+        rotVelocity: new THREE.Vector3(Math.random() * 6, Math.random() * 6, Math.random() * 6),
+        bounces: 0,
+        age: 0
+      });
+    }
+
+    // 4. Loose Soil Lumps
+    potObj.looseSoilLumps.forEach(lump => {
+      scene.attach(lump);
+      activeDebris.push({
+        mesh: lump,
+        velocity: new THREE.Vector3(
+          (Math.random() - 0.5) * 5,
+          Math.random() * 3 + 1,
+          Math.random() * 3 + 1
+        ),
+        rotVelocity: new THREE.Vector3(Math.random() * 15, Math.random() * 15, Math.random() * 15),
+        bounces: 0,
+        age: 0
+      });
+    });
+
+    scene.remove(potObj.root);
+    registerShatterSuccess(hitPoint);
+  }
+
+  function triggerScreenShake(heavy = false) {
+    container.classList.remove('shake-normal', 'shake-heavy');
+    void container.offsetWidth;
+    container.classList.add(heavy ? 'shake-heavy' : 'shake-normal');
+    setTimeout(() => container.classList.remove('shake-normal', 'shake-heavy'), heavy ? 380 : 220);
+  }
+
+  function registerShatterSuccess(hitPoint) {
+    shatterCount++;
+    comboCount++;
+    document.getElementById('shatter-counter').innerText = shatterCount;
+
+    stressLevel = Math.min(100, stressLevel + 6);
+    document.getElementById('stress-bar').style.width = `${stressLevel}%`;
+    document.getElementById('stress-percentage').innerText = `${stressLevel}%`;
+
+    if (stressLevel >= 100 && !isFever) {
+      isFever = true;
+      document.getElementById('fever-overlay').classList.remove('hidden');
+      setTimeout(() => {
+        isFever = false;
+        stressLevel = 30;
+        document.getElementById('fever-overlay').classList.add('hidden');
+      }, 7000);
+    }
+
+    const announcer = document.getElementById('combo-announcer');
+    const comboText = document.getElementById('combo-count');
+    const comboSub = document.getElementById('combo-sub');
+
+    if (comboCount >= 3) {
+      comboText.innerText = `${comboCount} COMBO!`;
+      comboSub.innerText = comboCount >= 10 ? '★ 爽快絶頂フィーバー中！ ★' : 'ストレス粉砕撃破！';
+      announcer.style.opacity = '1';
+    }
+
+    clearTimeout(comboTimer);
+    comboTimer = setTimeout(() => {
+      comboCount = 0;
+      announcer.style.opacity = '0';
+    }, 1500);
+
+    if (hitPoint.distanceTo(targetGroup.position) < 0.7) {
+      targetGroup.scale.set(1.25, 1.25, 1.25);
+      setTimeout(() => targetGroup.scale.set(1.0, 1.0, 1.0), 140);
+    }
+  }
+
+  // =========================================================================
+  // ANIMATION LOOP & PHYSICS UPDATES
+  // =========================================================================
+  const clock = new THREE.Clock();
+
+  function updatePhysics(delta) {
+    const timeScale = isSlowMo ? 0.2 : 1.0;
+    const dt = Math.min(delta, 0.08) * timeScale;
+    const gravity = -9.8;
+
+    // First person hand idle breathing sway
+    if (handMesh) {
+      const t = performance.now() * 0.003;
+      handMesh.position.set(
+        camera.position.x + 0.28 + Math.sin(t) * 0.012,
+        camera.position.y - 0.32 + Math.cos(t * 1.6) * 0.008,
+        camera.position.z - 0.65
+      );
+      handMesh.rotation.set(0.1 + Math.sin(t * 1.2) * 0.03, -0.2, 0.06);
+    }
+
+    // 1. Flying Pots
+    for (let i = flyingPots.length - 1; i >= 0; i--) {
+      const item = flyingPots[i];
+      if (item.isBroken) {
+        flyingPots.splice(i, 1);
+        continue;
+      }
+
+      item.velocity.y += gravity * dt;
+      item.potObj.root.position.x += item.velocity.x * dt;
+      item.potObj.root.position.y += item.velocity.y * dt;
+      item.potObj.root.position.z += item.velocity.z * dt;
+
+      item.potObj.root.rotation.x += item.rotSpeed.x * dt;
+      item.potObj.root.rotation.y += item.rotSpeed.y * dt;
+      item.potObj.root.rotation.z += item.rotSpeed.z * dt;
+
+      // Wall collision
+      if (item.potObj.root.position.z <= WALL_Z + 0.3) {
+        smashPot(item, item.potObj.root.position.clone());
+        flyingPots.splice(i, 1);
+        continue;
+      }
+
+      // Floor collision
+      if (item.potObj.root.position.y <= 0.28) {
+        smashPot(item, item.potObj.root.position.clone());
+        flyingPots.splice(i, 1);
+        continue;
+      }
+    }
+
+    // 2. Active Shards & Root Ball Debris
+    for (let i = activeDebris.length - 1; i >= 0; i--) {
+      const d = activeDebris[i];
+      d.age += dt;
+      d.velocity.y += gravity * dt;
+
+      d.mesh.position.x += d.velocity.x * dt;
+      d.mesh.position.y += d.velocity.y * dt;
+      d.mesh.position.z += d.velocity.z * dt;
+
+      d.mesh.rotation.x += d.rotVelocity.x * dt;
+      d.mesh.rotation.y += d.rotVelocity.y * dt;
+
+      // Wall bounce
+      if (d.mesh.position.z <= WALL_Z + 0.05) {
+        d.mesh.position.z = WALL_Z + 0.05;
+        d.velocity.z = Math.abs(d.velocity.z) * 0.28;
+      }
+
+      // Floor bounce & friction
+      if (d.mesh.position.y <= 0.04) {
+        d.mesh.position.y = 0.04;
+        d.bounces++;
+        if (d.bounces < 3) {
+          d.velocity.y = -d.velocity.y * 0.32;
+          d.velocity.x *= 0.65;
+          d.velocity.z *= 0.65;
+          d.rotVelocity.multiplyScalar(0.6);
+        } else {
+          d.velocity.set(0, 0, 0);
+          d.rotVelocity.set(0, 0, 0);
+        }
+      }
+
+      // Cleanup debris overload
+      if (activeDebris.length > 260 && d.age > 4.5) {
+        scene.remove(d.mesh);
+        if (d.mesh.geometry) d.mesh.geometry.dispose();
+        activeDebris.splice(i, 1);
+      }
+    }
+
+    // 3. Particles
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      if (partLife[i] > 0) {
+        partPos[i * 3] += partVel[i].x * dt;
+        partPos[i * 3 + 1] += partVel[i].y * dt;
+        partPos[i * 3 + 2] += partVel[i].z * dt;
+        partVel[i].y -= 2.2 * dt;
+        partVel[i].multiplyScalar(0.96);
+        partLife[i] -= dt * 0.85;
+        if (partPos[i * 3 + 1] < 0) {
+          partPos[i * 3 + 1] = 0;
+          partLife[i] = 0;
+        }
+      }
+    }
+    partGeo.attributes.position.needsUpdate = true;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const delta = clock.getDelta();
+    updatePhysics(delta);
+    renderer.render(scene, camera);
+  }
+
+  // =========================================================================
+  // USER CONTROLS & INTERACTION MODES
+  // =========================================================================
+  const crosshair = document.getElementById('crosshair');
+  const chargeRing = document.getElementById('charge-ring');
+  const chargeLabel = document.getElementById('charge-label');
+
+  let pointerX = window.innerWidth * 0.5;
+  let pointerY = window.innerHeight * 0.45;
+  let isPointerDown = false;
+  let chargeStartTime = 0;
+  let gatlingTimer = null;
+
+  window.addEventListener('pointermove', (e) => {
+    pointerX = e.clientX;
+    pointerY = e.clientY;
+    crosshair.style.left = `${pointerX}px`;
+    crosshair.style.top = `${pointerY}px`;
+  });
+
+  function executeThrow(powerMult = 1.0) {
+    if (currentAttackMode === 'shotgun') {
+      throwPot(pointerX, pointerY, powerMult);
+      throwPot(pointerX, pointerY, powerMult * 0.95, { x: -0.65, y: 0.15 });
+      throwPot(pointerX, pointerY, powerMult * 0.95, { x: 0.65, y: -0.15 });
+    } else {
+      throwPot(pointerX, pointerY, powerMult);
+    }
+  }
+
+  window.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('header') || e.target.closest('.glass-panel')) return;
+    isPointerDown = true;
+    chargeStartTime = performance.now();
+
+    if (currentAttackMode === 'gatling') {
+      executeThrow(1.2);
+      gatlingTimer = setInterval(() => {
+        executeThrow(1.25);
+      }, 130);
+    } else if (currentAttackMode === 'charge') {
+      chargeLabel.classList.remove('hidden');
+      chargeLabel.innerText = 'CHARGING...';
+    } else {
+      executeThrow(1.0);
+    }
+  });
+
+  setInterval(() => {
+    if (isPointerDown && currentAttackMode === 'charge') {
+      const elapsed = Math.min(1.2, (performance.now() - chargeStartTime) / 1000);
+      const ratio = elapsed / 1.2;
+      chargeRing.style.strokeDashoffset = `${150.8 * (1 - ratio)}`;
+      if (ratio >= 1.0) {
+        chargeLabel.innerText = '★ MAX POWER READY ★';
+        chargeLabel.classList.add('animate-pulse');
+      }
+    } else {
+      chargeRing.style.strokeDashoffset = '150.8';
+      chargeLabel.classList.add('hidden');
+      chargeLabel.classList.remove('animate-pulse');
+    }
+  }, 35);
+
+  window.addEventListener('pointerup', () => {
+    if (!isPointerDown) return;
+    if (currentAttackMode === 'charge') {
+      const elapsed = (performance.now() - chargeStartTime) / 1000;
+      const chargePower = Math.min(2.8, 1.0 + elapsed * 1.6);
+      executeThrow(chargePower);
+    }
+    isPointerDown = false;
+    clearInterval(gatlingTimer);
+  });
+
+  // Attack Mode Selection Tabs
+  document.querySelectorAll('.mode-tab').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+      const target = e.currentTarget;
+      target.classList.add('active');
+      currentAttackMode = target.getAttribute('data-mode');
+
+      const text = document.getElementById('instruction-text');
+      const badge = document.getElementById('instruction-badge');
+      if (currentAttackMode === 'gatling') {
+        badge.innerText = 'HOLD / DRAG';
+        text.innerText = '画面長押しで次々と機関銃のように乱射！';
+      } else if (currentAttackMode === 'charge') {
+        badge.innerText = 'LONG PRESS';
+        text.innerText = '長押しチャージで壁を揺るがす剛速球を発射！';
+      } else if (currentAttackMode === 'shotgun') {
+        badge.innerText = 'TAP / CLICK';
+        text.innerText = '1クリックで3個一斉散弾発射！';
+      } else {
+        badge.innerText = 'TAP / CLICK';
+        text.innerText = 'クリックで投擲！優雅な放物線を描いて壁でリアルに粉砕';
+      }
+    });
+  });
+
+  // Select 3 Pot Types
+  function selectPot(type) {
+    if (!allVesselTypes.includes(type) && type !== 'random') return;
+    currentVessel = type;
+    document.querySelectorAll('.vessel-card').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-vessel') === type);
+    });
+
+    const badge = document.getElementById('crosshair-vessel-badge');
+    if (badge) {
+      badge.innerText = type === 'random' ? '🎲' : (vesselMeta[type]?.badge || '🪴');
+      badge.classList.remove('animate-bounce');
+      void badge.offsetWidth;
+      badge.classList.add('animate-bounce');
+    }
+    updateHandModel();
+  }
+
+  document.querySelectorAll('.vessel-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      selectPot(e.currentTarget.getAttribute('data-vessel'));
+    });
+  });
+
+  // Keyboard Shortcuts (1-3, 0 for random)
+  window.addEventListener('keydown', (e) => {
+    const list = ['random', ...allVesselTypes];
+    if (e.key === '1') selectPot('terracotta');
+    else if (e.key === '2') selectPot('porcelain');
+    else if (e.key === '3') selectPot('concrete');
+    else if (e.key === '0') selectPot('random');
+    else if (e.key === 'q' || e.key === 'Q') {
+      let idx = list.indexOf(currentVessel) - 1;
+      if (idx < 0) idx = list.length - 1;
+      selectPot(list[idx]);
+    } else if (e.key === 'e' || e.key === 'E') {
+      let idx = (list.indexOf(currentVessel) + 1) % list.length;
+      selectPot(list[idx]);
+    }
+  });
+
+  // Mouse Wheel Cycling
+  window.addEventListener('wheel', (e) => {
+    if (e.target.closest('header') || e.target.closest('.glass-panel')) return;
+    const list = ['random', ...allVesselTypes];
+    let idx = list.indexOf(currentVessel);
+    if (e.deltaY > 0) {
+      idx = (idx + 1) % list.length;
+    } else {
+      idx = (idx - 1 + list.length) % list.length;
+    }
+    selectPot(list[idx]);
+  }, { passive: true });
+
+  // Slow Motion Toggle
+  const btnSlowMo = document.getElementById('btn-slowmo');
+  btnSlowMo.addEventListener('click', () => {
+    isSlowMo = !isSlowMo;
+    btnSlowMo.classList.toggle('bg-orange-500/30', isSlowMo);
+    document.getElementById('slowmo-text').innerText = isSlowMo ? '通常速度' : 'スロー再生';
+  });
+
+  // Clean Debris
+  document.getElementById('btn-clean').addEventListener('click', () => {
+    activeDebris.forEach(d => {
+      scene.remove(d.mesh);
+      if (d.mesh.geometry) d.mesh.geometry.dispose();
+    });
+    activeDebris.length = 0;
+
+    wallDecals.forEach(d => {
+      scene.remove(d);
+      d.geometry.dispose();
+      d.material.dispose();
+    });
+    wallDecals.length = 0;
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) partLife[i] = 0;
+    partGeo.attributes.position.needsUpdate = true;
+  });
+
+  // Audio Toggle
+  const btnAudio = document.getElementById('btn-audio');
+  const audioIcon = document.getElementById('audio-icon');
+  btnAudio.addEventListener('click', () => {
+    audio.init();
+    audio.enabled = !audio.enabled;
+    audioIcon.className = audio.enabled ? 'fa-solid fa-volume-high text-emerald-400' : 'fa-solid fa-volume-xmark text-zinc-500';
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  window.onload = function() {
+    animate();
+    setTimeout(() => {
+      throwPot(window.innerWidth * 0.5, window.innerHeight * 0.45, 1.0);
+    }, 450);
+  };
+  </script>
+</body>
+</html>
